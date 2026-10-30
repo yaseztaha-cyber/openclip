@@ -199,6 +199,9 @@ app = FastAPI(
 _allowed_origins = [
     "http://localhost:3000",
     "http://localhost:5000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5000",
+    "http://127.0.0.1:8000",
 ]
 _replit_domain = os.environ.get("REPLIT_DEV_DOMAIN")
 if _replit_domain:
