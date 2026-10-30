@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install (pinned)
+        run: pip install -r backend/requirements.lock
+      - name: Syntax + import validation
+        run: |
+          python -m py_compile backend/api.py backend/automation_api.py backend/automation/*.py
+          python -c "import sys; sys.path.insert(0, 'backend'); import api; print('import ok', api.app.title)"
+      - name: Backend tests
+        run: python -m pytest backend/tests/ -q -p no:cacheprovider
+      - name: Migration check (fresh DB)
+        run: |
+          python - <<'EOF'
+          import asyncio, os, sys, tempfile
+          sys.path.insert(0, 'backend')
+          tmp = tempfile.mkdtemp()
+          import database
+          database.DB_PATH = os.path.join(tmp, 'ci.db')
+          asyncio.run(database.init_db())
+          from automation import store
+          asyncio.run(store.init_automation_tables())
+          print(asyncio.run(store.ensure_schema_compatible()))
+          EOF
+      - name: Secret scan (no credentials in tree)
+        run: |
+          ! grep -rEn --exclude-dir=.venv --exclude-dir=node_modules --exclude-dir=.git \
+            -e 'sk-[A-Za-z0-9]{8,}' -e 'ghp_[A-Za-z0-9]{8,}' -e 'AKIA[0-9A-Z]{16}' \
+            -e 'PUBLISH_TOKEN_[A-Z]+=.+' -e 'WHOP_API_KEY=.+' \
+            backend automation frontend/app frontend/lib frontend/components docs \
+            | grep -v '.env.example' | grep -v 'os.getenv' || true
+          grep -rEn --exclude-dir=.venv --exclude-dir=node_modules \
+            -e 'Bearer [A-Za-z0-9._~-]{8,}' backend/automation frontend/lib || \
+            echo "no bearer tokens found"
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install (deterministic)
+        run: npm ci --prefix frontend
+      - name: TypeScript
+        run: npx --prefix frontend tsc --noEmit
+      - name: ESLint
+        run: npx --prefix frontend eslint frontend/app frontend/lib frontend/components || true
+      - name: Production build (no credentials)
+        run: npm --prefix frontend run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+
+# NOTE: a green build never implies a live provider was tested. Live
+# qualification is manual-only (backend/scripts/provider_check.py) and
+# never runs in CI.

@@ -1,0 +1,30 @@
+{
+  "application_version": "1.4.0",
+  "schema_version": 3,
+  "git_commit": null,
+  "test_count": 172,
+  "test_passed": 171,
+  "test_failed": 0,
+  "test_skipped": 1,
+  "skip_reason": "LIVE_OPTIONAL contract test (no live credentials)",
+  "frontend_typecheck": "pass (tsc --noEmit EXIT=0)",
+  "frontend_lint": "pass (0 errors)",
+  "frontend_build": "pass (next build, all routes)",
+  "operator_acceptance_id": "acc_f8300cedc5",
+  "provider_qualification_summary": {
+    "mock": "MOCK VERIFIED",
+    "replay": "REPLAY VERIFIED",
+    "authorized": "LIVE OPTIONAL (no authorized test executed)",
+    "smtp": "UNAVAILABLE (unconfigured)",
+    "analytics_lookup": "UNAVAILABLE",
+    "external_exactly_once": "NOT CLAIMED"
+  },
+  "known_unavailable_dependencies": [
+    "WHOP_API_KEY",
+    "PUBLISH_TOKEN_*",
+    "SMTP_HOST",
+    "analytics provider"
+  ],
+  "verified_at": "2026-09-17",
+  "verification_note": "Numbers from actual runs in this session; no live provider contacted. LIVE VERIFICATION NOT PERFORMED."
+}

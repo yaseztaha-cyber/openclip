@@ -1,0 +1,25 @@
+{
+  "fixture_id": "replay-provider-submission-v1",
+  "provider": "replay",
+  "version": 1,
+  "created_at": "2026-09-17T00:00:00Z",
+  "schema_version": 3,
+  "description": "Recorded submission responses: one confirmation, one rate-limit, one server error. Identifiers are synthetic.",
+  "responses": [
+    {
+      "outcome": "CONFIRMED",
+      "provider_submission_id": "replay_sub_0001",
+      "post_url": "replay://tiktok/replay_sub_0001",
+      "status_code": 200
+    },
+    {
+      "outcome": "rate_limited",
+      "provider_status_code": 429,
+      "retry_after": 30
+    },
+    {
+      "outcome": "temporary",
+      "provider_status_code": 503
+    }
+  ]
+}

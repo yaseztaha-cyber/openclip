@@ -1,0 +1,102 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+
+# Data and temporary files
+data/
+tmp/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Node.js
+node_modules/
+.next/
+out/
+.pnp
+.pnp.js
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+*.pem
+.vercel
+attached_assets/
+err.json
+err2.json
+error_trace.txt
+
+# Broader environment patterns
+.env.*
+!.env.example
+!**/.env.example
+
+# Database companion files
+*.db-wal
+*.db-shm
+*.db.backup
+*.backup
+
+# Logs directory
+logs/
+
+# Model weights and cached model files
+*.tflite
+*.task
+*.bin
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.pb
+
+# Local browser profiles
+browser-profiles/
+chrome-profile/
+firefox-profile/
+edge-profile/
+
+# Secrets and credentials
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+credentials.json
+secrets.json
+service-account*.json

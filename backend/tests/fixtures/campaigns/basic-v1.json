@@ -1,0 +1,32 @@
+{
+  "fixture_id": "replay-campaigns-basic-v1",
+  "provider": "replay",
+  "version": 1,
+  "created_at": "2026-09-17T00:00:00Z",
+  "schema_version": 3,
+  "description": "Two deterministic campaigns: one clean tech launch, one gambling promotion. No credentials, no personal data.",
+  "campaigns": [
+    {
+      "campaign_id": "replay-good",
+      "name": "Replay Tech Launch",
+      "description": "Create fun clips for a gadget launch.",
+      "requirements": "Post 1 clip.",
+      "platforms": ["tiktok"],
+      "content_sources": ["https://example.com/video"],
+      "affiliations": [],
+      "brands": ["ExampleGadget"],
+      "entities": []
+    },
+    {
+      "campaign_id": "replay-bad",
+      "name": "Replay Casino",
+      "description": "Online casino sports betting bonus.",
+      "requirements": "Post 1 clip.",
+      "platforms": ["tiktok"],
+      "content_sources": ["https://example.com/video"],
+      "affiliations": [],
+      "brands": [],
+      "entities": []
+    }
+  ]
+}

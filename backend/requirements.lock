@@ -1,0 +1,25 @@
+# Pinned reproduce of the verified 1.4.0-rc1 environment.
+# Generated from the working venv (Windows, Python 3.14).
+# Install exactly:  pip install -r requirements.lock
+# Human-editable floors live in requirements.txt; refresh this lock after
+# any dependency change and re-run the full suite before release.
+aiosqlite==0.22.1
+anyio==4.14.2
+cryptography==50.0.1
+fastapi==0.141.1
+google-genai==2.21.0
+httpx==0.28.1
+mediapipe==1.0.1
+numpy==2.5.2
+openai-whisper==20250625
+pillow==12.3.0
+pydantic==2.13.5
+pytest==9.1.1
+python-dotenv==1.2.3
+python-multipart==0.0.32
+starlette==1.6.0
+tenacity==9.1.4
+uvicorn==0.52.4
+websockets==16.1.1
+youtube-transcript-api==1.2.4
+yt-dlp==2026.8.19

@@ -1,0 +1,21 @@
+{
+  "fixture_id": "replay-submissions-basic-v1",
+  "provider": "replay",
+  "version": 1,
+  "created_at": "2026-09-17T00:00:00Z",
+  "schema_version": 3,
+  "description": "Submission attempt shapes: one confirmed, one unknown-then-confirmed. Synthetic identifiers only.",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "request_status": "RESPONDED",
+      "provider_submission_id": "replay_sub_0001",
+      "result_state": "CONFIRMED"
+    },
+    {
+      "attempt_number": 1,
+      "request_status": "TIMEOUT_AFTER_TRANSMIT",
+      "result_state": "UNKNOWN_EXTERNAL_RESULT"
+    }
+  ]
+}

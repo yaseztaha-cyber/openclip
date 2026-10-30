@@ -1,0 +1,22 @@
+{
+  "fixture_id": "replay-analytics-basic-v1",
+  "provider": "replay",
+  "version": 1,
+  "created_at": "2026-09-17T00:00:00Z",
+  "schema_version": 3,
+  "description": "Synthetic analytics snapshot with confirmed views and one confirmed earning. No real metrics.",
+  "observations": [
+    {
+      "views": 120,
+      "likes": 11,
+      "comments": 2,
+      "shares": 1,
+      "earnings_confirmed": 3.5
+    },
+    {
+      "views": null,
+      "likes": null,
+      "earnings_confirmed": null
+    }
+  ]
+}
