@@ -155,8 +155,10 @@ def test_run_match():
 def test_match_empty_candidates():
     """Match with empty candidates."""
     client = TestClient(api_mod.app)
+    import uuid
+    vid = "test_video_empty_match_%s" % uuid.uuid4().hex[:8]
     ann_body = {
-        "video_id": "test_video_empty_match",
+        "video_id": vid,
         "annotator_id": "ann1",
         "start": 0.0,
         "end": 15.0,
@@ -164,7 +166,7 @@ def test_match_empty_candidates():
     }
     client.post("/api/benchmark/annotations", json=ann_body)
     match_body = {
-        "video_id": "test_video_empty_match",
+        "video_id": vid,
         "candidates": [],
         "iou_threshold": 0.5,
     }
