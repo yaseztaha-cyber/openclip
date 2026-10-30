@@ -491,21 +491,36 @@ def compute_category_agreement(annotations_list: list[list[InterestingMoment]]) 
 # Candidate-to-reference matching
 # ---------------------------------------------------------------------------
 
+# Import optimal matching
+try:
+    import optimal_matching as om
+    _HAS_OPTIMAL = True
+except ImportError:
+    _HAS_OPTIMAL = False
+
+
 def match_candidates_to_references(
     candidates: list[dict],
     references: list[InterestingMoment],
     iou_threshold: float = 0.5,
 ) -> dict:
-    """Match candidates to reference moments using one-to-one matching.
+    """Match candidates to reference moments using optimal bipartite matching.
 
-    Uses maximum-weight bipartite matching (greedy by IoU) to ensure
-    one candidate matches at most one reference and vice versa.
+    Uses the Hungarian algorithm to maximize cardinality (number of matches)
+    then maximize total IoU. This is NOT greedy — it finds the globally
+    optimal one-to-one assignment.
 
-    Returns:
-        dict with matches, unmatched candidates, unmatched references,
-        and metrics at the given threshold.
+    Algorithm: hungarian_optimal_v1 (see optimal_matching.py)
     """
-    # Build IoU matrix
+    if _HAS_OPTIMAL:
+        return om.optimal_match(
+            candidates, references, iou_threshold=iou_threshold,
+            get_ref_start=lambda r: r.start,
+            get_ref_end=lambda r: r.end,
+        )
+
+    # Fallback: greedy (should not happen)
+    # ... (keep old implementation as fallback)
     iou_matrix = []
     for c in candidates:
         row = []
@@ -514,12 +529,10 @@ def match_candidates_to_references(
             row.append(iou)
         iou_matrix.append(row)
 
-    # Greedy one-to-one matching by IoU (highest first)
     matches = []
     used_cands = set()
     used_refs = set()
 
-    # Sort all pairs by IoU descending
     pairs = []
     for ci, c in enumerate(candidates):
         for ri, r in enumerate(references):
@@ -555,6 +568,7 @@ def match_candidates_to_references(
         "true_positives": len(matches),
         "false_positives": len(unmatched_cands),
         "false_negatives": len(unmatched_refs),
+        "algorithm": "greedy_fallback",
     }
 
 
@@ -777,7 +791,7 @@ def analyze_ranking_weaknesses(
     matched_indices = {m["candidate_idx"] for m in match["matches"]}
 
     # Analyze top-ranked candidates
-    ranked = sorted(enumerate(candidates), key=lambda x: x[1].get("viral_score", 0), reverse=True)
+    ranked = sorted(enumerate(candidates), key=lambda x: x[1].get("editorial_priority_score", x[1].get("viral_score", 0)), reverse=True)
     top_half = ranked[:len(ranked) // 2] if ranked else []
     bottom_half = ranked[len(ranked) // 2:] if ranked else []
 
@@ -807,7 +821,7 @@ def analyze_ranking_weaknesses(
             cid = c.get("id", "") or "cand_%03d" % candidates.index(c)
             if cid in review_by_candidate:
                 for rev in review_by_candidate[cid]:
-                    correlations.append((c.get("viral_score", 0), rev.overall_usefulness))
+                    correlations.append((c.get("editorial_priority_score", c.get("viral_score", 0)), rev.overall_usefulness))
 
         if correlations:
             # Simple Pearson correlation
@@ -877,7 +891,7 @@ def improve_ranking(
         section_counts[sec] += 1
 
     for c in improved:
-        score = float(c.get("viral_score", 5))
+        score = float(c.get("editorial_priority_score", c.get("viral_score", 5)))
 
         # 1. Boundary penalty
         warnings = c.get("warnings", [])
@@ -926,7 +940,8 @@ def improve_ranking(
                 if mean_burst > 0.7:
                     score -= (mean_burst - 0.7) * 2.0
 
-        c["viral_score"] = max(1, min(10, int(score)))
+        c["editorial_priority_score"] = max(1, min(10, int(score)))
+        c["viral_score"] = c["editorial_priority_score"]  # deprecated alias for backward compat
         c["_improved_score"] = round(score, 2)
         c["_improvement_reasons"] = []
 
