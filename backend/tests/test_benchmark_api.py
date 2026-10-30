@@ -175,3 +175,14 @@ def test_match_empty_candidates():
     data = resp.json()
     assert data["true_positives"] == 0
     assert data["false_negatives"] == 1
+
+def test_path_traversal_blocked():
+    client = TestClient(api_mod.app)
+    body = {
+        "video_id": "../etc/passwd",
+        "annotator_id": "ann1",
+        "start": 0.0,
+        "end": 10.0,
+    }
+    resp = client.post("/api/benchmark/annotations", json=body)
+    assert resp.status_code == 400

@@ -2828,6 +2828,9 @@ class BenchmarkMatchResponse(BaseModel):
 @app.post("/api/benchmark/annotations", response_model=BenchmarkAnnotationResponse)
 async def create_benchmark_annotation(body: BenchmarkAnnotationRequest):
     """Create a human-interest moment annotation."""
+    # Validate video_id (prevent path traversal)
+    if not body.video_id or ".." in body.video_id or "/" in body.video_id or "\\" in body.video_id:
+        raise HTTPException(status_code=400, detail="Invalid video_id")
     # Validate timestamps
     if body.start < 0:
         raise HTTPException(status_code=400, detail="Start must be non-negative")
@@ -2887,6 +2890,9 @@ async def list_benchmark_annotations(video_id: str, annotator_id: Optional[str] 
 @app.post("/api/benchmark/reviews", response_model=BenchmarkReviewResponse)
 async def create_benchmark_review(body: BenchmarkReviewRequest):
     """Save a candidate review."""
+    # Validate video_id (prevent path traversal)
+    if not body.video_id or ".." in body.video_id or "/" in body.video_id or "\\" in body.video_id:
+        raise HTTPException(status_code=400, detail="Invalid video_id")
     import uuid as _uuid
     review = _bd.CandidateReview(
         review_id=str(_uuid.uuid4()),
@@ -2937,6 +2943,9 @@ async def list_benchmark_reviews(video_id: str, reviewer_id: Optional[str] = Non
 @app.post("/api/benchmark/match", response_model=BenchmarkMatchResponse)
 async def run_benchmark_match(body: BenchmarkMatchRequest):
     """Run candidate-reference matching and return metrics."""
+    # Validate video_id (prevent path traversal)
+    if not body.video_id or ".." in body.video_id or "/" in body.video_id or "\\" in body.video_id:
+        raise HTTPException(status_code=400, detail="Invalid video_id")
     anns = _bd.load_annotations("data", body.video_id)
     match_result = _bd.match_candidates_to_references(body.candidates, anns, iou_threshold=body.iou_threshold)
     metrics = _bd.compute_detection_metrics(match_result)
@@ -2970,3 +2979,68 @@ async def list_benchmark_datasets():
                 "created_at": manifest.get("created_at", ""),
             })
     return {"datasets": datasets}
+
+# Export endpoints for benchmark reports (Phase 4.1.3)
+# Added after benchmark datasets endpoint
+
+@app.get("/api/benchmark/export/{video_id}")
+async def export_benchmark_report(video_id: str, format: str = "json"):
+    """Export benchmark report in JSON, CSV, or HTML format."""
+    import tempfile, os as _os
+    from fastapi.responses import FileResponse, Response
+
+    # Validate format
+    if format not in ("json", "csv", "html"):
+        raise HTTPException(status_code=400, detail="Format must be json, csv, or html")
+
+    # Load annotations and reviews
+    anns = _bd.load_annotations("data", video_id)
+    reviews = _bd.load_candidate_reviews("data", video_id)
+
+    # Get candidates from annotations (as reference moments)
+    # For export, we create a minimal report
+    import evaluation_engine as _ee
+
+    # Build candidate list from annotations for matching
+    candidates = []
+    for a in anns:
+        candidates.append({"start": a.start, "end": a.end, "title": a.title, "viral_score": a.importance})
+
+    # Run matching if we have both
+    match_result = None
+    if candidates and anns:
+        match_result = _bd.match_candidates_to_references(candidates, anns, 0.5)
+
+    # Create a minimal evaluation report
+    report = _ee.EvaluationReport()
+    report.video_path = video_id
+    report.candidate_count = len(candidates)
+
+    if match_result:
+        report.diversity = _ee.evaluate_diversity(candidates)
+
+    # Save to temp file
+    tmpdir = tempfile.mkdtemp()
+    base = _os.path.join(tmpdir, "report")
+
+    if format == "json":
+        path = base + ".json"
+        _ee.report_to_json(report, path)
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return Response(content=content, media_type="application/json",
+                       headers={"Content-Disposition": "attachment; filename=benchmark_%s.json" % video_id})
+    elif format == "csv":
+        path = base + ".csv"
+        _ee.report_to_csv(report, path)
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return Response(content=content, media_type="text/csv",
+                       headers={"Content-Disposition": "attachment; filename=benchmark_%s.csv" % video_id})
+    else:
+        path = base + ".html"
+        _ee.report_to_html(report, path)
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return Response(content=content, media_type="text/html",
+                       headers={"Content-Disposition": "attachment; filename=benchmark_%s.html" % video_id})

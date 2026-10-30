@@ -70,8 +70,7 @@ error_trace.txt
 *.backup
 
 # Logs directory
-logs/
-
+logs/\n\ntest-results/\nplaywright-report/\n
 # Model weights and cached model files
 *.tflite
 *.task
