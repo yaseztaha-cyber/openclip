@@ -299,6 +299,23 @@ def test_iou_values_correct():
     assert abs(result["matches"][0]["iou"] - 0.333333) < 0.001
 
 
+def test_valid_greedy_counterexample():
+    cands = [
+        {"start": 0.0, "end": 15.0},
+        {"start": 0.0, "end": 6.0},
+    ]
+    refs = [
+        {"start": 0.0, "end": 10.0},
+        {"start": 10.0, "end": 20.0},
+    ]
+    result = om.optimal_match(cands, refs, iou_threshold=0.2)
+    assert result["true_positives"] == 2
+    assert result["false_positives"] == 0
+    assert result["false_negatives"] == 0
+    total_iou = sum(m["iou"] for m in result["matches"])
+    assert abs(total_iou - 0.85) < 0.001
+
+
 def test_boundary_errors():
     """Start/end/duration errors should be correct."""
     cands = [{"start": 1.0, "end": 9.0}]
