@@ -25,8 +25,73 @@ import hashlib
 import time
 import logging
 import math
+import threading
+import tempfile
 from typing import Any, Optional, Callable
 from dataclasses import dataclass, field, asdict
+
+# ---------------------------------------------------------------------------
+# Atomic persistence and concurrency control
+# ---------------------------------------------------------------------------
+
+# Per-path thread locks for in-process concurrency
+_path_locks: dict[str, threading.RLock] = {}
+_locks_guard = threading.Lock()
+
+
+def _get_path_lock(path: str) -> threading.RLock:
+    """Get or create a thread lock for a given file path."""
+    with _locks_guard:
+        if path not in _path_locks:
+            _path_locks[path] = threading.RLock()
+        return _path_locks[path]
+
+
+def _atomic_write_json(path: str, data: Any) -> None:
+    """Atomically write JSON data to a file.
+
+    Uses temp file + fsync + os.replace for crash safety.
+    Thread-safe via per-path lock.
+    """
+    lock = _get_path_lock(path)
+    with lock:
+        dir_name = os.path.dirname(os.path.abspath(path))
+        os.makedirs(dir_name, exist_ok=True)
+
+        # Serialize first (fail before touching disk)
+        try:
+            content = json.dumps(data, indent=2, default=str)
+        except (TypeError, ValueError) as e:
+            raise ValueError("Failed to serialize data: %s" % e)
+
+        # Create temp file in same directory
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            # Atomic replace
+            os.replace(tmp_path, path)
+        except Exception:
+            # Clean up temp file on failure
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
+
+
+def _read_json_safe(path: str) -> Any:
+    """Read JSON from file, returning None if file doesn't exist or is corrupted."""
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -162,8 +227,7 @@ def init_dataset(base_dir: str, version: str = DATASET_VERSION) -> str:
             dataset_version=version,
             created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         )
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(asdict(manifest), f, indent=2)
+        _atomic_write_json(manifest_path, asdict(manifest))
     return ddir
 
 
@@ -192,8 +256,7 @@ def _load_manifest(path: str) -> dict:
 
 def _save_manifest(path: str, manifest: dict) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
+    _atomic_write_json(path, manifest)
 
 
 def get_videos(base_dir: str, version: str = DATASET_VERSION) -> list[dict]:
@@ -221,23 +284,18 @@ def save_annotation(base_dir: str, moment: InterestingMoment, version: str = DAT
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     # Load existing annotations for this annotator
-    existing = []
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-            if not isinstance(existing, list):
-                existing = [existing]
-        except (json.JSONDecodeError, Exception):
-            existing = []
+    existing = _read_json_safe(path)
+    if existing is None:
+        existing = []
+    if not isinstance(existing, list):
+        existing = [existing]
 
     # Validate moment
     _validate_moment(moment)
 
     # Append (preserve original annotations)
     existing.append(asdict(moment))
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(existing, f, indent=2)
+    _atomic_write_json(path, existing)
 
 
 def load_annotations(base_dir: str, video_id: str, annotator_id: str | None = None, version: str = DATASET_VERSION) -> list[InterestingMoment]:
@@ -303,15 +361,11 @@ def save_candidate_review(base_dir: str, review: CandidateReview, version: str =
     path = _review_path(base_dir, review.video_id, review.reviewer_id, version)
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    existing = []
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-            if not isinstance(existing, list):
-                existing = [existing]
-        except (json.JSONDecodeError, Exception):
-            existing = []
+    existing = _read_json_safe(path)
+    if existing is None:
+        existing = []
+    if not isinstance(existing, list):
+        existing = [existing]
 
     # Validate rating fields
     for field_name in ["opening_hook", "context_completeness", "interesting_moment",
@@ -328,8 +382,7 @@ def save_candidate_review(base_dir: str, review: CandidateReview, version: str =
             raise ValueError("Unknown rejection reason: %s" % reason)
 
     existing.append(asdict(review))
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(existing, f, indent=2)
+    _atomic_write_json(path, existing)
 
 
 def load_candidate_reviews(base_dir: str, video_id: str, reviewer_id: str | None = None, version: str = DATASET_VERSION) -> list[CandidateReview]:

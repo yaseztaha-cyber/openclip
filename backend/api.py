@@ -2757,3 +2757,216 @@ async def websocket_render_progress(websocket: WebSocket, clip_id: str):
 if __name__ == "__main__":
     import uvicorn  # type: ignore
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
+
+# Benchmark API endpoints (Phase 4.1.2)
+# Inserted after review_clip function
+
+import sys as _sys
+_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) if False else ".")
+try:
+    import benchmark_dataset as _bd
+except ImportError:
+    import sys as _s
+    _s.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import benchmark_dataset as _bd
+
+# Pydantic models for benchmark API
+class BenchmarkAnnotationRequest(BaseModel):
+    video_id: str
+    annotator_id: str
+    start: float
+    end: float
+    title: str = ""
+    description: str = ""
+    why_valuable: str = ""
+    categories: list[str] = []
+    importance: int = 3
+    confidence: int = 3
+    notes: str = ""
+
+class BenchmarkAnnotationResponse(BaseModel):
+    success: bool
+    moment_id: str
+    video_id: str
+
+class BenchmarkReviewRequest(BaseModel):
+    candidate_id: str
+    video_id: str
+    reviewer_id: str
+    opening_hook: int = 0
+    context_completeness: int = 0
+    interesting_moment: int = 0
+    ending_payoff: int = 0
+    audio_clarity: int = 0
+    visual_quality: int = 0
+    overall_usefulness: int = 0
+    label: str = ""
+    rejection_reasons: list[str] = []
+    notes: str = ""
+
+class BenchmarkReviewResponse(BaseModel):
+    success: bool
+    review_id: str
+    candidate_id: str
+
+class BenchmarkMatchRequest(BaseModel):
+    video_id: str
+    candidates: list[dict]
+    iou_threshold: float = 0.5
+
+class BenchmarkMatchResponse(BaseModel):
+    success: bool
+    true_positives: int
+    false_positives: int
+    false_negatives: int
+    precision: float
+    recall: float
+    f1: float
+    matches: list[dict]
+
+
+@app.post("/api/benchmark/annotations", response_model=BenchmarkAnnotationResponse)
+async def create_benchmark_annotation(body: BenchmarkAnnotationRequest):
+    """Create a human-interest moment annotation."""
+    # Validate timestamps
+    if body.start < 0:
+        raise HTTPException(status_code=400, detail="Start must be non-negative")
+    if body.end <= body.start:
+        raise HTTPException(status_code=400, detail="End must be after start")
+    if body.importance < 1 or body.importance > 5:
+        raise HTTPException(status_code=400, detail="Importance must be 1-5")
+    if body.confidence < 1 or body.confidence > 5:
+        raise HTTPException(status_code=400, detail="Confidence must be 1-5")
+    for cat in body.categories:
+        if cat not in _bd.EDITORIAL_CATEGORIES:
+            raise HTTPException(status_code=400, detail="Unknown category: %s" % cat)
+
+    import uuid as _uuid
+    moment = _bd.InterestingMoment(
+        moment_id=str(_uuid.uuid4()),
+        video_id=body.video_id,
+        annotator_id=body.annotator_id,
+        start=body.start,
+        end=body.end,
+        title=body.title,
+        description=body.description,
+        why_valuable=body.why_valuable,
+        categories=body.categories,
+        importance=body.importance,
+        confidence=body.confidence,
+        notes=body.notes,
+    )
+    _bd.save_annotation(DATA_DIR.replace("data", "data") if False else "data", moment)
+    return BenchmarkAnnotationResponse(
+        success=True,
+        moment_id=moment.moment_id,
+        video_id=body.video_id,
+    )
+
+
+@app.get("/api/benchmark/annotations/{video_id}")
+async def list_benchmark_annotations(video_id: str, annotator_id: Optional[str] = None):
+    """List annotations for a video."""
+    anns = _bd.load_annotations("data", video_id, annotator_id=annotator_id)
+    return {"video_id": video_id, "annotations": [asdict(a) if False else {
+        "moment_id": a.moment_id,
+        "video_id": a.video_id,
+        "annotator_id": a.annotator_id,
+        "start": a.start,
+        "end": a.end,
+        "title": a.title,
+        "description": a.description,
+        "why_valuable": a.why_valuable,
+        "categories": a.categories,
+        "importance": a.importance,
+        "confidence": a.confidence,
+        "notes": a.notes,
+    } for a in anns]}
+
+
+@app.post("/api/benchmark/reviews", response_model=BenchmarkReviewResponse)
+async def create_benchmark_review(body: BenchmarkReviewRequest):
+    """Save a candidate review."""
+    import uuid as _uuid
+    review = _bd.CandidateReview(
+        review_id=str(_uuid.uuid4()),
+        candidate_id=body.candidate_id,
+        video_id=body.video_id,
+        reviewer_id=body.reviewer_id,
+        opening_hook=body.opening_hook,
+        context_completeness=body.context_completeness,
+        interesting_moment=body.interesting_moment,
+        ending_payoff=body.ending_payoff,
+        audio_clarity=body.audio_clarity,
+        visual_quality=body.visual_quality,
+        overall_usefulness=body.overall_usefulness,
+        label=body.label,
+        rejection_reasons=body.rejection_reasons,
+        notes=body.notes,
+    )
+    _bd.save_candidate_review("data", review)
+    return BenchmarkReviewResponse(
+        success=True,
+        review_id=review.review_id,
+        candidate_id=body.candidate_id,
+    )
+
+
+@app.get("/api/benchmark/reviews/{video_id}")
+async def list_benchmark_reviews(video_id: str, reviewer_id: Optional[str] = None):
+    """List reviews for a video."""
+    reviews = _bd.load_candidate_reviews("data", video_id, reviewer_id=reviewer_id)
+    return {"video_id": video_id, "reviews": [{
+        "review_id": r.review_id,
+        "candidate_id": r.candidate_id,
+        "video_id": r.video_id,
+        "reviewer_id": r.reviewer_id,
+        "opening_hook": r.opening_hook,
+        "context_completeness": r.context_completeness,
+        "interesting_moment": r.interesting_moment,
+        "ending_payoff": r.ending_payoff,
+        "audio_clarity": r.audio_clarity,
+        "visual_quality": r.visual_quality,
+        "overall_usefulness": r.overall_usefulness,
+        "label": r.label,
+        "rejection_reasons": r.rejection_reasons,
+        "notes": r.notes,
+    } for r in reviews]}
+
+
+@app.post("/api/benchmark/match", response_model=BenchmarkMatchResponse)
+async def run_benchmark_match(body: BenchmarkMatchRequest):
+    """Run candidate-reference matching and return metrics."""
+    anns = _bd.load_annotations("data", body.video_id)
+    match_result = _bd.match_candidates_to_references(body.candidates, anns, iou_threshold=body.iou_threshold)
+    metrics = _bd.compute_detection_metrics(match_result)
+    return BenchmarkMatchResponse(
+        success=True,
+        true_positives=match_result["true_positives"],
+        false_positives=match_result["false_positives"],
+        false_negatives=match_result["false_negatives"],
+        precision=metrics["precision"],
+        recall=metrics["recall"],
+        f1=metrics["f1"],
+        matches=match_result["matches"],
+    )
+
+
+@app.get("/api/benchmark/datasets")
+async def list_benchmark_datasets():
+    """List available benchmark datasets."""
+    base = "data/evaluation/benchmarks"
+    if not os.path.exists(base):
+        return {"datasets": []}
+    datasets = []
+    for name in os.listdir(base):
+        path = os.path.join(base, name, "dataset.json")
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            datasets.append({
+                "version": manifest.get("dataset_version", name),
+                "video_count": len(manifest.get("videos", [])),
+                "created_at": manifest.get("created_at", ""),
+            })
+    return {"datasets": datasets}
