@@ -72,6 +72,7 @@ import downloader  # type: ignore
 import clipper  # type: ignore
 import transcriber  # type: ignore
 import llm  # type: ignore
+import deterministic_candidate  # type: ignore
 import reframer # type: ignore
 import captioner # type: ignore
 import editorial  # type: ignore
@@ -754,12 +755,46 @@ async def _run_pipeline(project_id: str, youtube_url: str, clip_options: Optiona
 
         await _broadcast(project_id, "transcribing", 50, "Transcript ready")
 
-        # ---- STEP 3: LLM Clip Suggestions ----
-        await database.update_project_status(project_id, "analyzing")
-        await _broadcast(project_id, "analyzing", 55, "AI analyzing video…")
+        # ---- STEP 3: Extract per-video multimodal signals (audio + visual) ----
+        # Runs once per video, normalized per-video (quiet podcast vs loud stream).
+        # Extracted BEFORE candidate generation so audio-peak and scene-cut
+        # windows can be included in the deterministic candidate set.
+        audio_sigs: dict = {"loudness": [], "burst": [], "silence": []}
+        visual_sigs: dict = {"motion": [], "scene_cut": []}
+        reaction_sig: list[float] = []
+        try:
+            await _broadcast(project_id, "analyzing", 56, "Analyzing audio excitement...")
+            audio_sigs = await asyncio.wait_for(
+                asyncio.to_thread(signals.extract_audio_signals, file_path, video_duration),
+                timeout=60.0)
+        except asyncio.TimeoutError:
+            logger.warning("Audio signal extraction timed out")
+        except Exception as exc:
+            logger.warning("Audio signal extraction failed: %s", exc)
+        try:
+            await _broadcast(project_id, "analyzing", 58, "Analyzing visual activity...")
+            visual_sigs = await asyncio.wait_for(
+                asyncio.to_thread(signals.extract_visual_signals, file_path, video_duration),
+                timeout=60.0)
+        except asyncio.TimeoutError:
+            logger.warning("Visual signal extraction timed out")
+        except Exception as exc:
+            logger.warning("Visual signal extraction failed: %s", exc)
+        # Reaction = fused burst + motion (face delta added after per-clip face detect)
+        try:
+            if audio_sigs["burst"] and visual_sigs["motion"]:
+                reaction_sig = signals.build_reaction_signal(
+                    audio_sigs["burst"], [0.0] * len(audio_sigs["burst"]), visual_sigs["motion"])
+            elif audio_sigs["burst"]:
+                reaction_sig = audio_sigs["burst"]
+            else:
+                reaction_sig = [0.5] * max(1, int(video_duration))
+        except Exception:
+            reaction_sig = [0.5] * max(1, int(video_duration))
 
-        provider = await settings_mod.get_setting("llm_provider") or "openai"
-        model = await settings_mod.get_setting("llm_model") or ""
+        # ---- STEP 3a: Deterministic Candidate Generation (no LLM, no network) ----
+        await database.update_project_status(project_id, "analyzing")
+        await _broadcast(project_id, "analyzing", 60, "Analyzing video...")
 
         def analyze_progress(stage: str, percent: float, msg: str):
             asyncio.run_coroutine_threadsafe(
@@ -767,107 +802,37 @@ async def _run_pipeline(project_id: str, youtube_url: str, clip_options: Optiona
                 loop,
             )
 
-        if provider == "auto":
-            candidates = await _build_auto_candidates()
-        else:
-            # Prefer the key stored for this provider, fall back to the generic key
-            api_key = (
-                await settings_mod.get_setting(f"llm_api_key_{provider}")
-                or await settings_mod.get_setting("llm_api_key")
-                or ""
-            )
-            candidates = [(provider, model, api_key)]
-
         suggestions: list[dict] = []
-        last_err: Optional[str] = None
-        for idx, (cand_provider, cand_model, cand_key) in enumerate(candidates):
-            try:
-                if len(candidates) > 1:
-                    await _broadcast(
-                        project_id, "analyzing", 55,
-                        f"Trying AI {cand_provider} ({idx + 1}/{len(candidates)})…",
-                    )
-                suggestions = await asyncio.wait_for(
-                    llm.get_clip_suggestions(
-                        transcript_segments, cand_provider, cand_key, cand_model,
-                        video_duration, progress_callback=analyze_progress,
-                    ),
-                    timeout=AUTO_CANDIDATE_TIMEOUT,
-                )
-                if suggestions:
-                    if cand_provider != provider:
-                        logger.info("Auto AI selected %s (%s)", cand_provider, cand_model or "default")
-                    break
-                last_err = f"{cand_provider} returned no clips"
-                logger.warning("AI %s returned no suggestions, trying next…", cand_provider)
-            except asyncio.TimeoutError:
-                last_err = f"{cand_provider} timed out"
-                logger.warning("AI %s timed out, trying next…", cand_provider)
-            except Exception as e:
-                last_err = str(e)
-                msg = str(e).lower()
-                if "401" in msg and len(candidates) == 1:
-                    last_err = "Invalid API key. Check your settings."
-                    break
-                logger.warning("AI %s failed (%s), trying next…", cand_provider, e)
-
-        if not suggestions:
-            msg = (last_err or "AI error").lower()
-            if "401" in msg or "invalid api key" in msg:
-                err_msg = "Invalid API key. Check your settings."
-            elif "429" in msg or "rate limit" in msg or "timed out" in msg:
-                err_msg = "All AI providers are rate-limited or slow. Wait a moment and hit Retry."
-            else:
-                err_msg = f"AI Error: {last_err}"
-            await database.update_project_status(project_id, "error")
-            await _broadcast(project_id, "error", 0, err_msg)
-            return
+        try:
+            suggestions = await asyncio.wait_for(
+                asyncio.to_thread(
+                    deterministic_candidate.generate_candidates,
+                    transcript_segments,
+                    video_duration,
+                    audio_sigs=audio_sigs,
+                    visual_sigs=visual_sigs,
+                    progress_callback=analyze_progress,
+                ),
+                timeout=AUTO_CANDIDATE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Deterministic candidate generation timed out")
+        except Exception as e:
+            logger.warning("Deterministic candidate generation failed: %s", e)
 
         if not suggestions:
             await database.update_project_status(project_id, "error")
-            await _broadcast(project_id, "error", 0, "AI could not find clip moments. Try a different video or check your API key.")
+            await _broadcast(project_id, "error", 0, "Could not generate clip candidates from this video.")
             return
 
         # ---- STEP 3b: Multimodal editorial pass ----
-        await _broadcast(project_id, "analyzing", 73, "Refining clip boundaries…")
+        await _broadcast(project_id, "analyzing", 73, "Refining clip boundaries...")
         try:
             sentences = editorial.build_sentences(transcript_segments)
             words_all = editorial.all_words(transcript_segments)
 
-            # ---- Extract per-video multimodal signals (audio + visual) ----
-            # Runs once per video, normalized per-video (quiet podcast vs loud stream).
-            audio_sigs = {"loudness": [], "burst": [], "silence": []}
-            visual_sigs = {"motion": [], "scene_cut": []}
-            reaction_sig: list[float] = []
-            try:
-                await _broadcast(project_id, "analyzing", 71, "Analyzing audio excitement…")
-                audio_sigs = await asyncio.wait_for(
-                    asyncio.to_thread(signals.extract_audio_signals, file_path, video_duration),
-                    timeout=60.0)
-            except asyncio.TimeoutError:
-                logger.warning("Audio signal extraction timed out")
-            except Exception as exc:
-                logger.warning("Audio signal extraction failed: %s", exc)
-            try:
-                await _broadcast(project_id, "analyzing", 72, "Analyzing visual activity…")
-                visual_sigs = await asyncio.wait_for(
-                    asyncio.to_thread(signals.extract_visual_signals, file_path, video_duration),
-                    timeout=60.0)
-            except asyncio.TimeoutError:
-                logger.warning("Visual signal extraction timed out")
-            except Exception as exc:
-                logger.warning("Visual signal extraction failed: %s", exc)
-            # Reaction = fused burst + motion (face delta added after per-clip face detect)
-            try:
-                if audio_sigs["burst"] and visual_sigs["motion"]:
-                    reaction_sig = signals.build_reaction_signal(
-                        audio_sigs["burst"], [0.0] * len(audio_sigs["burst"]), visual_sigs["motion"])
-                elif audio_sigs["burst"]:
-                    reaction_sig = audio_sigs["burst"]
-                else:
-                    reaction_sig = [0.5] * max(1, int(video_duration))
-            except Exception:
-                reaction_sig = [0.5] * max(1, int(video_duration))
+            # Signals already extracted above — reuse the same objects.
+            # (audio_sigs, visual_sigs, reaction_sig are available from Step 3)
 
             # ---- Optimize boundaries + multimodal scoring per candidate ----
             refined: list[dict] = []
