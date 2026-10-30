@@ -540,7 +540,7 @@ def match_candidates_to_references(
     pairs.sort(reverse=True)
 
     for iou, ci, ri in pairs:
-        if iou < iou_threshold:
+        if iou < iou_threshold - 1e-9:
             break
         if ci in used_cands or ri in used_refs:
             continue

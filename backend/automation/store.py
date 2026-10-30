@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
-    return datetime.datetime.utcnow().isoformat() + "Z"
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 async def init_automation_tables() -> None:

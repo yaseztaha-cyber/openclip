@@ -1971,7 +1971,7 @@ async def _run_editor_job(job: dict) -> None:
         logger.error("Editor render %s failed: %s", job["id"], exc)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
-        job["finished_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+        job["finished_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
         payload = _render_job_status(job)
         _schedule_persist(job)
         try:
@@ -2004,7 +2004,7 @@ def _start_editor_job(clip_id: str, project_id: str, state: Optional[dict] = Non
         "clips_status": None,
         "output": None,
         "output_clip": None,
-        "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "finished_at": None,
     }
     _render_jobs[job["id"]] = job
@@ -2142,7 +2142,7 @@ async def render_all_clips(project_id: str, body: Optional[RenderAllRequest] = N
         "clips_status": {c["id"]: {"status": "queued"} for c in clips},
         "output": None,
         "output_clip": None,
-        "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "finished_at": None,
     }
     _render_jobs[job["id"]] = job
@@ -2205,7 +2205,7 @@ async def render_all_clips(project_id: str, body: Optional[RenderAllRequest] = N
         job["stage"] = "done"
         job["percent"] = 100 if job["status"] == "done" else job["percent"]
         job["message"] = "Batch render complete" if job["status"] == "done" else job["message"]
-        job["finished_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+        job["finished_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
         _schedule_persist(job)
         try:
             await _broadcast(project_id, "render-all", job["percent"], job["message"])

@@ -39,32 +39,45 @@ def hungarian_match(
     if m == 0:
         return []
 
-    # Build cost matrix (we minimize cost, so cost = -weight for valid edges)
-    # Pad to square with dummy rows/columns
-    size = max(n, m)
-    # Modified weights: valid edges get (big_m + iou), invalid get 0
-    # We want to maximize, so cost = -modified_weight
-    INF = float("inf")
+    # Build cost matrix with (n+m) x (n+m) dimensions.
+    # Rows 0..n-1: real candidates
+    # Rows n..n+m-1: dummy (for unmatched references)
+    # Cols 0..m-1: real references
+    # Cols m..m+n-1: dummy (for unmatched candidates)
+    #
+    # Cost values (minimization):
+    #   valid real-real:     -(big_m + iou)  [attractive, prioritizes cardinality then IoU]
+    #   invalid real-real:   big_m * 10      [prohibited]
+    #   real candidate - dummy col:  0       [unmatched candidate, neutral]
+    #   dummy row - real reference:  0       [unmatched reference, neutral]
+    #   dummy-dummy:                 0       [neutral]
+    #
+    # This ensures every real candidate can be either matched to a valid
+    # reference (negative cost) or left unmatched (zero cost via dummy column).
+    # Invalid edges are never preferred over unmatched (big_m*10 >> 0).
+    size = n + m
     cost = [[0.0] * size for _ in range(size)]
 
     for i in range(n):
         for j in range(m):
             iou = weights[i][j]
-            if iou >= threshold:
-                # Valid edge: cost = -(big_m + iou) to prioritize cardinality then IoU
+            if iou >= threshold - 1e-9:
                 cost[i][j] = -(big_m + iou)
             else:
-                # Invalid edge: very high cost (effectively forbidden)
                 cost[i][j] = big_m * 10  # prohibit
+
+    # Dummy rows (n..n+m-1) and dummy cols (m..m+n-1) already 0.0
+    # Real candidate to dummy col: 0.0 (already set)
+    # Dummy row to real ref: 0.0 (already set)
 
     # For dummy rows (i >= n) and dummy cols (j >= m): cost = 0 (free assignment)
     # Hungarian algorithm (minimization)
     assignment = _hungarian(cost, size)
-    # Extract valid matches
+    # Extract valid matches: only real candidate rows (0..n-1) assigned to real ref cols (0..m-1)
     result = []
     for i in range(n):
         j = assignment[i]
-        if j < m and weights[i][j] >= threshold:
+        if j < m and weights[i][j] >= threshold - 1e-9:
             result.append((i, j))
     return result
 
@@ -116,7 +129,7 @@ def _hungarian(cost: list[list[float]], n: int) -> list[int]:
             if j0 == 0:
                 break
 
-    # Build assignment
+    # Build assignment (size = n, passed as parameter)
     assignment = [0] * n
     for j in range(1, n + 1):
         if p[j] != 0:

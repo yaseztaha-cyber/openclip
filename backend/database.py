@@ -670,7 +670,7 @@ async def save_editor_state(clip_id: str, state: dict) -> None:
     # Ensure required fields
     state = dict(state)
     state["_version"] = 1
-    state["_updated_at"] = __import__("datetime").datetime.utcnow().isoformat() + "Z"
+    state["_updated_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z")
     payload = json.dumps(state)
     conn = await _get_connection()
     try:
