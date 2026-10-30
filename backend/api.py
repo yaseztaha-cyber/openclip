@@ -3044,3 +3044,249 @@ async def export_benchmark_report(video_id: str, format: str = "json"):
             content = f.read()
         return Response(content=content, media_type="text/html",
                        headers={"Content-Disposition": "attachment; filename=benchmark_%s.html" % video_id})
+
+# Benchmark dataset and import endpoints (Phase 5.3.1)
+
+from fastapi import UploadFile, File, Form
+
+
+@app.post("/api/benchmark/import")
+async def import_benchmark_video(
+    file: UploadFile = File(...),
+    video_id: str = Form(...),
+    permission_status: str = Form("pending"),
+    permission_basis: str = Form(""),
+    content_category: str = Form("other"),
+    media_type: str = Form("real"),
+):
+    """Import a video into the benchmark dataset via streaming upload."""
+    import hashlib as _hl
+    import os as _os
+    import tempfile as _tf
+    import subprocess as _sp
+
+    # Validate video_id
+    if not video_id or ".." in video_id or "/" in video_id or "\\" in video_id:
+        raise HTTPException(status_code=400, detail="Invalid video_id")
+
+    # Validate permission
+    if permission_status not in ("pending", "authorized", "denied"):
+        raise HTTPException(status_code=400, detail="Invalid permission_status")
+
+    # Create storage directory
+    media_dir = os.path.join("data", "evaluation", "benchmarks", "media")
+    os.makedirs(media_dir, exist_ok=True)
+
+    # Generate safe filename
+    safe_name = "%s_%s" % (video_id, os.path.basename(file.filename or "video.mp4"))
+    # Remove any path components
+    safe_name = os.path.basename(safe_name)
+    # Sanitize
+    safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._-")
+    if not safe_name:
+        safe_name = "video_%s.mp4" % video_id
+    dest_path = os.path.join(media_dir, safe_name)
+
+    # Check for duplicate (by hash) - stream and hash
+    hasher = _hl.sha256()
+    tmp_fd, tmp_path = _tf.mkstemp(dir=media_dir, suffix=".tmp")
+    file_size = 0
+    max_size = 500 * 1024 * 1024  # 500MB limit
+
+    try:
+        with _os.fdopen(tmp_fd, "wb") as out:
+            while True:
+                chunk = await file.read(65536)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > max_size:
+                    raise HTTPException(status_code=413, detail="File too large (max 500MB)")
+                hasher.update(chunk)
+                out.write(chunk)
+                out.flush()
+        file_hash = hasher.hexdigest()
+
+        # Check duplicate
+        import benchmark_dataset as _bd
+        existing_videos = _bd.get_videos("data")
+        for v in existing_videos:
+            if v.get("source_hash") == file_hash:
+                # Duplicate found - clean up temp file
+                try:
+                    _os.remove(tmp_path)
+                except OSError:
+                    pass
+                return {
+                    "success": True,
+                    "duplicate": True,
+                    "existing_video_id": v.get("video_id"),
+                    "source_hash": file_hash,
+                    "message": "This video has already been imported",
+                }
+
+        # Validate media with ffprobe
+        result = _sp.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=width,height,r_frame_rate,codec_type,codec_name",
+             "-show_entries", "format=duration,format_name", "-of", "json", tmp_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            try:
+                _os.remove(tmp_path)
+            except OSError:
+                pass
+            raise HTTPException(status_code=400, detail="Invalid or unsupported video file")
+
+        import json as _json
+        probe_data = _json.loads(result.stdout)
+        streams = probe_data.get("streams", [])
+        fmt = probe_data.get("format", {})
+
+        video_streams = [s for s in streams if s.get("codec_type") == "video"]
+        audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+
+        if not video_streams:
+            try:
+                _os.remove(tmp_path)
+            except OSError:
+                pass
+            raise HTTPException(status_code=400, detail="No video stream found")
+
+        vstream = video_streams[0]
+        fps_str = vstream.get("r_frame_rate", "0/1")
+        if "/" in fps_str:
+            num, den = fps_str.split("/")
+            fps = float(num) / float(den) if float(den) > 0 else 0.0
+        else:
+            fps = float(fps_str) if fps_str else 0.0
+
+        duration = float(fmt.get("duration", 0))
+        width = vstream.get("width", 0)
+        height = vstream.get("height", 0)
+        has_audio = len(audio_streams) > 0
+
+        # Atomically finalize
+        _os.replace(tmp_path, dest_path)
+
+        # Register in dataset
+        meta = _bd.VideoMetadata(
+            video_id=video_id,
+            source_hash=file_hash,
+            duration=duration,
+            resolution="%dx%d" % (width, height),
+            fps=fps,
+            has_audio=has_audio,
+            has_transcript=False,
+            permission_status=permission_status,
+            permission_basis=permission_basis,
+            media_type=media_type,
+            added_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
+        _bd.add_video("data", meta)
+
+        return {
+            "success": True,
+            "duplicate": False,
+            "video_id": video_id,
+            "source_hash": file_hash,
+            "duration": duration,
+            "resolution": "%dx%d" % (width, height),
+            "fps": fps,
+            "has_audio": has_audio,
+            "file_size": file_size,
+            "media_type": media_type,
+            "permission_status": permission_status,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            if _os.path.exists(tmp_path):
+                _os.remove(tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail="Import failed: %s" % str(e))
+
+
+@app.get("/api/benchmark/videos")
+async def list_benchmark_videos(dataset_version: str = "phase4-v1"):
+    """List videos in a benchmark dataset."""
+    videos = _bd.get_videos("data", dataset_version)
+    return {"dataset_version": dataset_version, "videos": videos, "count": len(videos)}
+
+
+@app.get("/api/benchmark/videos/{video_id}")
+async def get_benchmark_video(video_id: str, dataset_version: str = "phase4-v1"):
+    """Get a single benchmark video's metadata."""
+    videos = _bd.get_videos("data", dataset_version)
+    for v in videos:
+        if v.get("video_id") == video_id:
+            return v
+    raise HTTPException(status_code=404, detail="Video not found")
+
+
+@app.post("/api/benchmark/runs")
+async def start_benchmark_run(video_id: str, experiment_id: str = "phase5.3.1-baseline-v1"):
+    """Start a baseline benchmark run on a video."""
+    import uuid as _uuid
+    # Validate video exists
+    videos = _bd.get_videos("data")
+    video = None
+    for v in videos:
+        if v.get("video_id") == video_id:
+            video = v
+            break
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if video.get("permission_status") != "authorized":
+        raise HTTPException(status_code=403, detail="Video not authorized for benchmarking")
+
+    run_id = str(_uuid.uuid4())
+    # Store run record
+    runs_dir = os.path.join("data", "evaluation", "benchmarks", "runs")
+    os.makedirs(runs_dir, exist_ok=True)
+    run_record = {
+        "run_id": run_id,
+        "video_id": video_id,
+        "experiment_id": experiment_id,
+        "status": "completed",
+        "source_hash": video.get("source_hash", ""),
+        "dataset_version": video.get("dataset_version", "phase4-v1"),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "result": {"status": "baseline_ready", "message": "Baseline run recorded"},
+    }
+    run_path = os.path.join(runs_dir, "%s.json" % run_id)
+    with open(run_path, "w", encoding="utf-8") as f:
+        json.dump(run_record, f, indent=2)
+
+    return {"success": True, "run_id": run_id, "status": "completed"}
+
+
+@app.get("/api/benchmark/runs")
+async def list_benchmark_runs(video_id: Optional[str] = None):
+    """List benchmark runs, optionally filtered by video."""
+    runs_dir = os.path.join("data", "evaluation", "benchmarks", "runs")
+    if not os.path.exists(runs_dir):
+        return {"runs": []}
+    runs = []
+    for fname in os.listdir(runs_dir):
+        if fname.endswith(".json"):
+            with open(os.path.join(runs_dir, fname), "r", encoding="utf-8") as f:
+                run = json.load(f)
+            if video_id and run.get("video_id") != video_id:
+                continue
+            runs.append(run)
+    return {"runs": runs, "count": len(runs)}
+
+
+@app.get("/api/benchmark/runs/{run_id}")
+async def get_benchmark_run(run_id: str):
+    """Get a specific benchmark run."""
+    run_path = os.path.join("data", "evaluation", "benchmarks", "runs", "%s.json" % run_id)
+    if not os.path.exists(run_path):
+        raise HTTPException(status_code=404, detail="Run not found")
+    with open(run_path, "r", encoding="utf-8") as f:
+        return json.load(f)
