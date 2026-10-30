@@ -30,57 +30,107 @@ import tempfile
 from typing import Any, Optional, Callable
 from dataclasses import dataclass, field, asdict
 
-# ---------------------------------------------------------------------------
-# Atomic persistence and concurrency control
-# ---------------------------------------------------------------------------
+import sys as _sys
+import os as _os
 
-# Per-path thread locks for in-process concurrency
-_path_locks: dict[str, threading.RLock] = {}
-_locks_guard = threading.Lock()
+# Cross-process file locking
+if _sys.platform == "win32":
+    import msvcrt as _msvcrt
+    def _acquire_file_lock(lock_path: str, timeout: float = 5.0) -> int:
+        """Acquire a cross-process file lock on Windows using msvcrt."""
+        import time as _time
+        fd = _os.open(lock_path, _os.O_RDWR | _os.O_CREAT, 0o644)
+        deadline = _time.monotonic() + timeout
+        while True:
+            try:
+                _msvcrt.locking(fd, _msvcrt.LK_NBLCK, 1)
+                return fd
+            except (OSError, IOError):
+                if _time.monotonic() > deadline:
+                    _os.close(fd)
+                    raise TimeoutError("Could not acquire lock: %s" % lock_path)
+                _time.sleep(0.05)
+    def _release_file_lock(fd: int, lock_path: str) -> None:
+        try:
+            _msvcrt.locking(fd, _msvcrt.LK_UNLCK, 1)
+        except (OSError, IOError):
+            pass
+        _os.close(fd)
+else:
+    import fcntl as _fcntl
+    def _acquire_file_lock(lock_path: str, timeout: float = 5.0) -> int:
+        import time as _time
+        fd = _os.open(lock_path, _os.O_RDWR | _os.O_CREAT, 0o644)
+        deadline = _time.monotonic() + timeout
+        while True:
+            try:
+                _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                return fd
+            except (OSError, IOError):
+                if _time.monotonic() > deadline:
+                    _os.close(fd)
+                    raise TimeoutError("Could not acquire lock: %s" % lock_path)
+                _time.sleep(0.05)
+    def _release_file_lock(fd: int, lock_path: str) -> None:
+        try:
+            _fcntl.flock(fd, _fcntl.LOCK_UN)
+        except (OSError, IOError):
+            pass
+        _os.close(fd)
 
 
-def _get_path_lock(path: str) -> threading.RLock:
-    """Get or create a thread lock for a given file path."""
+def _get_lock_path(path: str) -> str:
+    """Get the lock file path for a given data file."""
+    return path + ".lock"
+
+
+_path_locks = {}
+_locks_guard = __import__('threading').Lock()
+
+def _get_path_lock(path):
     with _locks_guard:
         if path not in _path_locks:
-            _path_locks[path] = threading.RLock()
+            _path_locks[path] = __import__('threading').RLock()
         return _path_locks[path]
-
 
 def _atomic_write_json(path: str, data: Any) -> None:
     """Atomically write JSON data to a file.
 
     Uses temp file + fsync + os.replace for crash safety.
-    Thread-safe via per-path lock.
+    Thread-safe via per-path RLock.
+    Cross-process safe via file locking.
     """
     lock = _get_path_lock(path)
+    lock_path = _get_lock_path(path)
     with lock:
-        dir_name = os.path.dirname(os.path.abspath(path))
-        os.makedirs(dir_name, exist_ok=True)
-
-        # Serialize first (fail before touching disk)
+        fd = _acquire_file_lock(lock_path)
         try:
-            content = json.dumps(data, indent=2, default=str)
-        except (TypeError, ValueError) as e:
-            raise ValueError("Failed to serialize data: %s" % e)
+            dir_name = _os.path.dirname(_os.path.abspath(path))
+            _os.makedirs(dir_name, exist_ok=True)
 
-        # Create temp file in same directory
-        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(content)
-                f.flush()
-                os.fsync(f.fileno())
-            # Atomic replace
-            os.replace(tmp_path, path)
-        except Exception:
-            # Clean up temp file on failure
+            # Serialize first
             try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except OSError:
-                pass
-            raise
+                content = json.dumps(data, indent=2, default=str)
+            except (TypeError, ValueError) as e:
+                raise ValueError("Failed to serialize data: %s" % e)
+
+            # Create temp file
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            try:
+                with _os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    f.write(content)
+                    f.flush()
+                    _os.fsync(f.fileno())
+                _os.replace(tmp_path, path)
+            except Exception:
+                try:
+                    if _os.path.exists(tmp_path):
+                        _os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
+        finally:
+            _release_file_lock(fd, lock_path)
 
 
 def _read_json_safe(path: str) -> Any:

@@ -65,7 +65,7 @@ elif [ -f ".venv/bin/activate" ]; then
     source .venv/bin/activate
 fi
 
-python -m uvicorn api:app --reload --port 8000 &
+python -m uvicorn api:app --reload --host 127.0.0.1 --port 8000 &
 BACKEND_PID=$!
 
 cd ..

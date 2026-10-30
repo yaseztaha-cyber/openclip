@@ -26,7 +26,7 @@ if ($existing) {
 }
 
 $p = Start-Process -FilePath $pythonw `
-    -ArgumentList "-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000" `
+    -ArgumentList "-m", "uvicorn", "api:app", "--host", "127.0.0.1", "--port", "8000" `
     -WorkingDirectory $backendDir `
     -RedirectStandardOutput $logOut -RedirectStandardError $logErr `
     -PassThru
