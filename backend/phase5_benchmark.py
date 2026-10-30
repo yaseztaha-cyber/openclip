@@ -89,9 +89,15 @@ def import_authorized_video(
     return video_meta
 
 
-def assign_partition(video_id: str, total_videos: int, dev_ratio: float = 0.6, val_ratio: float = 0.2) -> str:
-    """Assign a video to a partition based on deterministic hashing."""
-    h = int(hashlib.md5(video_id.encode()).hexdigest(), 16)
+PARTITION_ALGORITHM_VERSION = "sha256-source-partition-v2"
+PARTITION_SEED = "openclip-phase5.2-partition-seed-v1"
+
+def assign_partition(source_hash, total_videos=0, dev_ratio=0.6, val_ratio=0.2, source_group_id=""):
+    if not source_hash:
+        raise ValueError("source_hash is required for partition assignment")
+    identity = source_group_id if source_group_id else source_hash
+    combined = (PARTITION_SEED + "|" + identity).encode("utf-8")
+    h = int(hashlib.sha256(combined).hexdigest(), 16)
     bucket = h % 100
     if bucket < int(dev_ratio * 100):
         return "dev"

@@ -108,3 +108,15 @@ def test_no_network():
             p5.assign_partition("v1", 5)
     finally:
         socket.socket.connect = original
+
+def test_same_source_hash_same_partition():
+    h = "abc123def456"
+    p1 = p5.assign_partition(h)
+    p2 = p5.assign_partition(h)
+    assert p1 == p2
+
+def test_partition_uses_sha256():
+    src = open("phase5_benchmark.py", "r", encoding="utf-8").read()
+    func_src = src.split("def assign_partition")[1].split("def get_partition")[0]
+    assert "hashlib.sha256" in func_src
+    assert "hashlib.md5" not in func_src
