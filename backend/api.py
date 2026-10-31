@@ -2078,24 +2078,39 @@ async def get_clip_detail(clip_id: str):
     return {"clip": clip, "project": project}
 
 
+@app.get("/api/clips/{clip_id}/preview")
+async def preview_clip(clip_id: str):
+    """Preview a clip without publishing gate enforcement."""
+    clip = await database.get_clip(clip_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    rel = clip["file_path"]
+    renders = await database.get_clip_renders(clip_id)
+    if renders:
+        rel = renders[-1].get("file_path") or rel
+    full = os.path.normpath(os.path.join(TMP_DIR, rel.replace("/files/", "", 1)))
+    if not os.path.isfile(full):
+        raise HTTPException(status_code=404, detail="File not found")
+    fname = clip.get("title") or "clip"
+    safe_name = re.sub(r"[^a-zA-Z0-9 _\\-]+", "", fname).strip() or "clip"
+    return FileResponse(full, media_type="video/mp4", filename=f"{safe_name}.mp4")
+
+
 @app.get("/api/clips/{clip_id}/download")
-async def download_clip(clip_id: str, publish: bool = False):
+async def download_clip(clip_id: str):
     """Download the latest render (or the clip file) as an attachment."""
     clip = await database.get_clip(clip_id)
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
 
-    # Publishing gate check
-    if publish:
-        project_id = clip.get("project_id")
-        if project_id:
-            try:
-                from audio_cleanup.publishing_gate import check_publish_ready
-                gate = check_publish_ready(project_id)
-                if not gate.allowed:
-                    raise HTTPException(status_code=403, detail="Publishing blocked: %s" % gate.reason)
-            except ImportError:
-                pass
+    # Publishing gate check (always enforced)
+    try:
+        from audio_cleanup.publishing_gate import check_publish_ready
+        gate = check_publish_ready(clip_id)
+        if not gate.allowed:
+            raise HTTPException(status_code=403, detail="Publishing blocked: %s" % gate.reason)
+    except ImportError:
+        pass
 
     rel = clip["file_path"]
     renders = await database.get_clip_renders(clip_id)
