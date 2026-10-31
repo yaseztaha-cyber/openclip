@@ -3,9 +3,19 @@
 import { useEffect, useState } from "react";
 import { getApiBaseUrl } from "@/lib/api";
 
+interface Project {
+  id: string;
+  title: string;
+  status: string;
+  clips?: { id: string; title: string; file_path: string }[];
+}
+
 export default function AudioCleanupPage() {
   const api = getApiBaseUrl();
-  const [videoPath, setVideoPath] = useState("");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProject, setSelectedProject] = useState("");
+  const [selectedClip, setSelectedClip] = useState("");
+  const [clipPath, setClipPath] = useState("");
   const [outputPath, setOutputPath] = useState("");
   const [status, setStatus] = useState<any>(null);
   const [modelStatus, setModelStatus] = useState<any>(null);
@@ -14,16 +24,32 @@ export default function AudioCleanupPage() {
   const [mode, setMode] = useState("mute");
 
   useEffect(() => {
+    fetch(`${api}/api/projects`)
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setProjects(data); })
+      .catch(() => setMessage("Failed to load projects"));
     fetch(`${api}/api/audio-cleanup/model-status`)
       .then(r => r.json())
       .then(setModelStatus)
-      .catch(() => setMessage("Failed to load model status"));
+      .catch(() => {});
   }, [api]);
 
+  const selectedProjectData = projects.find(p => p.id === selectedProject);
+  const clips = selectedProjectData?.clips || [];
+
+  const handleClipChange = (clipId: string) => {
+    setSelectedClip(clipId);
+    const clip = clips.find(c => c.id === clipId);
+    if (clip) {
+      setClipPath(clip.file_path || "");
+      setOutputPath("");
+    }
+  };
+
   const inspect = async () => {
-    if (!videoPath) { setMessage("Enter video path"); return; }
+    if (!clipPath) { setMessage("Select a clip first"); return; }
     try {
-      const res = await fetch(`${api}/api/audio-cleanup/inspect?video_path=${encodeURIComponent(videoPath)}`, { method: "POST" });
+      const res = await fetch(`${api}/api/audio-cleanup/inspect?video_path=${encodeURIComponent(clipPath)}`, { method: "POST" });
       const data = await res.json();
       setStatus(data);
       setMessage("Inspection complete");
@@ -33,11 +59,12 @@ export default function AudioCleanupPage() {
   };
 
   const processMute = async () => {
-    if (!videoPath || !outputPath) { setMessage("Enter both paths"); return; }
+    if (!clipPath) { setMessage("Select a clip first"); return; }
+    const out = outputPath || clipPath.replace(".mp4", "_muted.mp4");
     setProcessing(true);
     setMessage("Processing...");
     try {
-      const res = await fetch(`${api}/api/audio-cleanup/mute?video_path=${encodeURIComponent(videoPath)}&output_path=${encodeURIComponent(outputPath)}`, { method: "POST" });
+      const res = await fetch(`${api}/api/audio-cleanup/mute?video_path=${encodeURIComponent(clipPath)}&output_path=${encodeURIComponent(out)}`, { method: "POST" });
       const data = await res.json();
       setStatus(data);
       setMessage(data.status === "verified_silent" ? "Verified silent - ready to publish" : "Failed: " + (data.error || "unknown"));
@@ -49,11 +76,12 @@ export default function AudioCleanupPage() {
   };
 
   const processRemoveMusic = async () => {
-    if (!videoPath || !outputPath) { setMessage("Enter both paths"); return; }
+    if (!clipPath) { setMessage("Select a clip first"); return; }
+    const out = outputPath || clipPath.replace(".mp4", "_cleaned.mp4");
     setProcessing(true);
     setMessage("Processing...");
     try {
-      const res = await fetch(`${api}/api/audio-cleanup/remove-music?video_path=${encodeURIComponent(videoPath)}&output_path=${encodeURIComponent(outputPath)}`, { method: "POST" });
+      const res = await fetch(`${api}/api/audio-cleanup/remove-music?video_path=${encodeURIComponent(clipPath)}&output_path=${encodeURIComponent(out)}`, { method: "POST" });
       const data = await res.json();
       setStatus(data);
       setMessage(data.status === "needs_review" ? "Needs review - check result" : "Failed: " + (data.error || "unknown"));
@@ -65,10 +93,10 @@ export default function AudioCleanupPage() {
   };
 
   const processReview = async () => {
-    if (!videoPath) { setMessage("Enter video path"); return; }
+    if (!clipPath) { setMessage("Select a clip first"); return; }
     setProcessing(true);
     try {
-      const res = await fetch(`${api}/api/audio-cleanup/review?video_path=${encodeURIComponent(videoPath)}`, { method: "POST" });
+      const res = await fetch(`${api}/api/audio-cleanup/review?video_path=${encodeURIComponent(clipPath)}`, { method: "POST" });
       const data = await res.json();
       setStatus(data);
       setMessage("Review complete");
@@ -95,40 +123,57 @@ export default function AudioCleanupPage() {
         </div>
       )}
 
-      {/* Input */}
+      {/* Video Selection */}
       <div style={{ border: "1px solid #444", padding: 15, marginBottom: 20, borderRadius: 8 }}>
-        <h2>Video Paths</h2>
+        <h2>Select Video</h2>
         <div style={{ marginBottom: 10 }}>
-          <label>Input Video: <input type="text" value={videoPath} onChange={e => setVideoPath(e.target.value)} style={{ width: "100%" }} placeholder="Path to video file" /></label>
+          <label>Project: </label>
+          <select value={selectedProject} onChange={e => { setSelectedProject(e.target.value); setSelectedClip(""); setClipPath(""); }} style={{ width: "100%" }}>
+            <option value="">-- Select Project --</option>
+            {projects.map(p => <option key={p.id} value={p.id}>{p.title || p.id}</option>)}
+          </select>
         </div>
-        <div style={{ marginBottom: 10 }}>
-          <label>Output Video: <input type="text" value={outputPath} onChange={e => setOutputPath(e.target.value)} style={{ width: "100%" }} placeholder="Path for cleaned output" /></label>
-        </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={inspect} disabled={processing}>Inspect</button>
-          <button onClick={processReview} disabled={processing}>Review Only</button>
-        </div>
+        {selectedProject && (
+          <div style={{ marginBottom: 10 }}>
+            <label>Clip: </label>
+            <select value={selectedClip} onChange={e => handleClipChange(e.target.value)} style={{ width: "100%" }}>
+              <option value="">-- Select Clip --</option>
+              {clips.map(c => <option key={c.id} value={c.id}>{c.title || c.id}</option>)}
+            </select>
+          </div>
+        )}
+        {clipPath && <div style={{ fontSize: 12, color: "#888" }}>Path: {clipPath}</div>}
       </div>
 
       {/* Mode Selection */}
       <div style={{ border: "1px solid #444", padding: 15, marginBottom: 20, borderRadius: 8 }}>
         <h2>Cleanup Mode</h2>
-        <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
           <label><input type="radio" name="mode" value="mute" checked={mode === "mute"} onChange={() => setMode("mute")} /> Mute All Audio (guaranteed music-free)</label>
-          <label><input type="radio" name="mode" value="remove" checked={mode === "remove"} onChange={() => setMode("remove")} /> Remove Music (experimental, may need review)</label>
+          <label><input type="radio" name="mode" value="remove" checked={mode === "remove"} onChange={() => setMode("remove")} /> Remove Music (experimental)</label>
+          <label><input type="radio" name="mode" value="review" checked={mode === "review"} onChange={() => setMode("review")} /> Review Only</label>
         </div>
         {mode === "mute" && (
           <div>
             <p style={{ fontSize: 12, color: "#888" }}>Removes all audio streams. Guarantees no music but also removes dialogue and sound effects.</p>
-            <button onClick={processMute} disabled={processing}>{processing ? "Processing..." : "Mute All Audio"}</button>
+            <button onClick={processMute} disabled={processing || !clipPath}>{processing ? "Processing..." : "Mute All Audio"}</button>
           </div>
         )}
         {mode === "remove" && (
           <div>
             <p style={{ fontSize: 12, color: "#888" }}>Attempts to remove background music while preserving speech. Requires source separation model (not available on this hardware). Result will need manual review.</p>
-            <button onClick={processRemoveMusic} disabled={processing}>{processing ? "Processing..." : "Remove Music (Experimental)"}</button>
+            <button onClick={processRemoveMusic} disabled={processing || !clipPath}>{processing ? "Processing..." : "Remove Music (Experimental)"}</button>
           </div>
         )}
+        {mode === "review" && (
+          <div>
+            <p style={{ fontSize: 12, color: "#888" }}>Inspect audio without modifying. No changes to the video.</p>
+            <button onClick={processReview} disabled={processing || !clipPath}>{processing ? "Processing..." : "Review Audio"}</button>
+          </div>
+        )}
+        <div style={{ marginTop: 10 }}>
+          <button onClick={inspect} disabled={processing || !clipPath}>Inspect Audio</button>
+        </div>
       </div>
 
       {/* Status */}
