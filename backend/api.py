@@ -3293,3 +3293,61 @@ async def get_benchmark_run(run_id: str):
         raise HTTPException(status_code=404, detail="Run not found")
     with open(run_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+# Audio cleanup endpoints (Phase 5.3.2)
+
+@app.get("/api/audio-cleanup/model-status")
+async def audio_cleanup_model_status():
+    """Check if source separation model is available."""
+    from audio_cleanup.processor import get_separation_model_status
+    return get_separation_model_status()
+
+
+@app.post("/api/audio-cleanup/inspect")
+async def audio_cleanup_inspect(video_path: str):
+    """Inspect a video's audio streams and characteristics."""
+    from audio_cleanup.inspector import inspect_video, inspection_to_dict
+    insp = inspect_video(video_path)
+    return inspection_to_dict(insp)
+
+
+@app.post("/api/audio-cleanup/mute")
+async def audio_cleanup_mute(video_path: str, output_path: str):
+    """Remove all audio from a video (strict mute mode)."""
+    from audio_cleanup.processor import process_mute_all
+    result = process_mute_all(video_path, output_path)
+    return {
+        "status": result.status,
+        "output_path": result.output_path,
+        "processing_time": result.processing_time,
+        "error": result.error,
+        "verification_report": result.verification_report,
+    }
+
+
+@app.post("/api/audio-cleanup/remove-music")
+async def audio_cleanup_remove_music(video_path: str, output_path: str):
+    """Attempt to remove background music while preserving speech."""
+    from audio_cleanup.processor import process_remove_music
+    result = process_remove_music(video_path, output_path)
+    return {
+        "status": result.status,
+        "output_path": result.output_path,
+        "processing_time": result.processing_time,
+        "error": result.error,
+        "model_available": result.model_available,
+        "verification_report": result.verification_report,
+    }
+
+
+@app.post("/api/audio-cleanup/review")
+async def audio_cleanup_review(video_path: str):
+    """Inspect audio without processing."""
+    from audio_cleanup.processor import process_review
+    result = process_review(video_path)
+    return {
+        "status": result.status,
+        "mode": result.mode,
+        "processing_time": result.processing_time,
+        "verification_report": result.verification_report,
+    }
