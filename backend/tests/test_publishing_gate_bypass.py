@@ -18,6 +18,7 @@ def test_download_blocked_without_report():
     # Use a fake clip_id that won't have a cleanup report
     resp = client.get("/api/clips/zzz_nonexistent_clip_xyz_999_98acf5da714b4fbd866596c675734135/download")
     # Should be 404 (clip not found) or 403 (blocked)
+    print("DEBUG: status=", resp.status_code, "body=", resp.text[:200])
     assert resp.status_code in (403, 404)
 
 
