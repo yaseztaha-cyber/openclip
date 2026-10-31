@@ -265,6 +265,8 @@ def get_model_info() -> dict:
         "capabilities": ["speech", "music", "effects"],
         "sample_rate": 48000,
         "worker_status": status,
-        "inference_tested": False,  # Will be True after successful test
-        "inference_performance": "Not yet measured",
+        "inference_tested": True,
+        "inference_performance": "Model loads in ~182s. Inference on 0.01s audio exceeds 10min. NOT practical.",
+        "cpu_feasible": False,
+        "recommendation": "Strict mute mode is the practical fallback.",
     }
