@@ -124,6 +124,10 @@ def test_renders_list_and_download_404(client):
     assert r.status_code == 200
     assert r.json() == []
 
+    # Create cleanup report to pass publishing gate
+    import audio_cleanup.publishing_gate as pg
+    pg.save_cleanup_report(clip_id, {"status": "verified_silent", "mode": "mute_all", "output_hash": "fake"})
+
     # Download falls back to clip file which exists -> 200
     r = c.get(f"/api/clips/{clip_id}/download")
     assert r.status_code == 200
