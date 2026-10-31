@@ -12,6 +12,14 @@ import api as api_mod
 import audio_cleanup.publishing_gate as pg
 
 
+def test_download_blocked_without_report():
+    import uuid
+    client = TestClient(api_mod.app)
+    clip_id = 'zzz_nonexistent_' + uuid.uuid4().hex
+    resp = client.get('/api/clips/%s/download' % clip_id)
+    assert resp.status_code in (403, 404)
+
+
 def test_download_blocked_needs_review():
     """Download with needs_review status returns 403."""
     with tempfile.TemporaryDirectory() as tmpdir:
