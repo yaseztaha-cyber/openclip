@@ -99,3 +99,4 @@ edge-profile/
 credentials.json
 secrets.json
 service-account*.json
+# Audio worker artifacts\nbackend/audio_cleanup_worker/venv/\nbackend/audio_cleanup_worker/*.txt\nbackend/audio_cleanup_worker/run_separation.py\n
