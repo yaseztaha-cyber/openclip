@@ -3379,3 +3379,59 @@ async def audio_cleanup_review(video_path: str):
         "processing_time": result.processing_time,
         "verification_report": result.verification_report,
     }
+
+@app.get("/api/audio-cleanup/clips")
+async def list_audio_cleanup_clips():
+    """List clips available for audio cleanup (managed assets)."""
+    projects = await database.get_all_projects()
+    result = []
+    for proj in projects:
+        pid = proj.get("id")
+        clips = await database.get_clips(pid) if hasattr(database, "get_clips") else []
+        for clip in clips:
+            result.append({
+                "clip_id": clip.get("id"),
+                "project_id": pid,
+                "title": clip.get("title", "Untitled"),
+                "file_path": clip.get("file_path", ""),
+            })
+    return {"clips": result}
+
+
+@app.post("/api/audio-cleanup/clips/{clip_id}/mute")
+async def audio_cleanup_mute_clip(clip_id: str):
+    """Mute all audio from a clip (managed asset)."""
+    clip = await database.get_clip(clip_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    rel = clip["file_path"]
+    full = os.path.normpath(os.path.join(TMP_DIR, rel.replace("/files/", "", 1)))
+    if not os.path.isfile(full):
+        raise HTTPException(status_code=404, detail="Clip file not found")
+    import audio_cleanup.publishing_gate as pg
+    import audio_cleanup.processor as proc
+    output = full.replace(".mp4", "_muted.mp4")
+    result = proc.process_mute_all(full, output)
+    if result.status == "verified_silent":
+        pg.save_cleanup_report(clip_id, {
+            "status": result.status,
+            "mode": result.mode,
+            "output_hash": result.output_hash if hasattr(result, "output_hash") else "",
+            "output_path": output,
+            "processing_time": result.processing_time,
+        })
+    return {
+        "clip_id": clip_id,
+        "status": result.status,
+        "output_path": output,
+        "processing_time": result.processing_time,
+        "error": result.error,
+    }
+
+
+@app.get("/api/audio-cleanup/clips/{clip_id}/status")
+async def audio_cleanup_clip_status(clip_id: str):
+    """Get audio cleanup status for a clip (managed asset)."""
+    import audio_cleanup.publishing_gate as pg
+    status = pg.get_cleanup_status(clip_id)
+    return {"clip_id": clip_id, **status}
