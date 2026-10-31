@@ -2079,11 +2079,24 @@ async def get_clip_detail(clip_id: str):
 
 
 @app.get("/api/clips/{clip_id}/download")
-async def download_clip(clip_id: str):
+async def download_clip(clip_id: str, publish: bool = False):
     """Download the latest render (or the clip file) as an attachment."""
     clip = await database.get_clip(clip_id)
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
+
+    # Publishing gate check
+    if publish:
+        project_id = clip.get("project_id")
+        if project_id:
+            try:
+                from audio_cleanup.publishing_gate import check_publish_ready
+                gate = check_publish_ready(project_id)
+                if not gate.allowed:
+                    raise HTTPException(status_code=403, detail="Publishing blocked: %s" % gate.reason)
+            except ImportError:
+                pass
+
     rel = clip["file_path"]
     renders = await database.get_clip_renders(clip_id)
     if renders:
