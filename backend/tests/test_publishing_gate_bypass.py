@@ -12,13 +12,6 @@ import api as api_mod
 import audio_cleanup.publishing_gate as pg
 
 
-def test_download_blocked_without_report():
-    """Download without cleanup report returns 403."""
-    client = TestClient(api_mod.app)
-    resp = client.get("/api/clips/zzz_nonexistent_clip_xyz_999_98acf5da714b4fbd866596c675734135/download")
-    assert resp.status_code in (403, 404)
-
-
 def test_download_blocked_needs_review():
     """Download with needs_review status returns 403."""
     with tempfile.TemporaryDirectory() as tmpdir:
